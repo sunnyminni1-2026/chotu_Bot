@@ -12,6 +12,10 @@ import {
     Shield,
     Menu,
     X,
+    Plus,
+    Trash2,
+    FileText,
+    Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TextShimmer } from "@/components/ui/text-shimmer";
@@ -22,9 +26,21 @@ interface Message {
     role: "user" | "assistant";
     content: string;
     time: string;
+    ragUsed?: boolean;
 }
 
+interface KBDocument {
+    id: string;
+    title: string;
+    preview: string;
+    chunksCount: number;
+    createdAt: string;
+}
+
+type Tab = "chat" | "knowledge";
+
 export default function AdminDashboard() {
+    const [activeTab, setActiveTab] = useState<Tab>("chat");
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState("");
     const [isLoading, setIsLoading] = useState(false);
@@ -34,6 +50,15 @@ export default function AdminDashboard() {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const router = useRouter();
 
+    // Knowledge base state
+    const [documents, setDocuments] = useState<KBDocument[]>([]);
+    const [kbLoading, setKbLoading] = useState(false);
+    const [showAddDoc, setShowAddDoc] = useState(false);
+    const [docTitle, setDocTitle] = useState("");
+    const [docContent, setDocContent] = useState("");
+    const [addingDoc, setAddingDoc] = useState(false);
+    const [kbMessage, setKbMessage] = useState<string | null>(null);
+
     // Auto-scroll
     useEffect(() => {
         if (chatWindowRef.current) {
@@ -41,22 +66,34 @@ export default function AdminDashboard() {
         }
     }, [messages, isLoading]);
 
-    // Auto-dismiss error
+    // Dismiss messages
     useEffect(() => {
         if (error) {
-            const timer = setTimeout(() => setError(null), 4000);
-            return () => clearTimeout(timer);
+            const t = setTimeout(() => setError(null), 4000);
+            return () => clearTimeout(t);
         }
     }, [error]);
 
+    useEffect(() => {
+        if (kbMessage) {
+            const t = setTimeout(() => setKbMessage(null), 3000);
+            return () => clearTimeout(t);
+        }
+    }, [kbMessage]);
+
     // Auto-resize textarea
     useEffect(() => {
-        const textarea = textareaRef.current;
-        if (textarea) {
-            textarea.style.height = "44px";
-            textarea.style.height = `${Math.min(textarea.scrollHeight, 150)}px`;
+        const ta = textareaRef.current;
+        if (ta) {
+            ta.style.height = "44px";
+            ta.style.height = `${Math.min(ta.scrollHeight, 150)}px`;
         }
     }, [input]);
+
+    // Load KB documents when tab switches
+    useEffect(() => {
+        if (activeTab === "knowledge") loadDocuments();
+    }, [activeTab]);
 
     const getTime = () =>
         new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -66,18 +103,13 @@ export default function AdminDashboard() {
         router.push("/admin/login");
     };
 
+    // ===== Chat Functions =====
     const sendMessage = useCallback(async () => {
         const trimmed = input.trim();
         if (!trimmed || isLoading) return;
 
-        const userMessage: Message = {
-            id: Date.now(),
-            role: "user",
-            content: trimmed,
-            time: getTime(),
-        };
-
-        setMessages((prev) => [...prev, userMessage]);
+        const userMsg: Message = { id: Date.now(), role: "user", content: trimmed, time: getTime() };
+        setMessages((p) => [...p, userMsg]);
         setInput("");
         setIsLoading(true);
         setError(null);
@@ -87,32 +119,19 @@ export default function AdminDashboard() {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    messages: [...messages, userMessage].map((m) => ({
-                        role: m.role,
-                        content: m.content,
-                    })),
+                    messages: [...messages, userMsg].map((m) => ({ role: m.role, content: m.content })),
                 }),
             });
-
             const data = await res.json();
-
             if (!res.ok) {
-                if (res.status === 401) {
-                    router.push("/admin/login");
-                    return;
-                }
+                if (res.status === 401) { router.push("/admin/login"); return; }
                 setError(data.error || "Something went wrong.");
                 return;
             }
-
-            const aiMessage: Message = {
-                id: Date.now() + 1,
-                role: "assistant",
-                content: data.message,
-                time: getTime(),
-            };
-
-            setMessages((prev) => [...prev, aiMessage]);
+            setMessages((p) => [
+                ...p,
+                { id: Date.now() + 1, role: "assistant", content: data.message, time: getTime(), ragUsed: data.ragUsed },
+            ]);
         } catch {
             setError("Network error.");
         } finally {
@@ -122,9 +141,58 @@ export default function AdminDashboard() {
     }, [input, isLoading, messages, router]);
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-        if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            sendMessage();
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    };
+
+    // ===== Knowledge Base Functions =====
+    const loadDocuments = async () => {
+        setKbLoading(true);
+        try {
+            const res = await fetch("/api/admin/knowledge");
+            const data = await res.json();
+            if (res.ok) setDocuments(data.documents || []);
+        } catch {
+            setError("Failed to load documents.");
+        } finally {
+            setKbLoading(false);
+        }
+    };
+
+    const addDocument = async () => {
+        if (!docTitle.trim() || !docContent.trim() || addingDoc) return;
+        setAddingDoc(true);
+        try {
+            const res = await fetch("/api/admin/knowledge", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ title: docTitle.trim(), content: docContent.trim() }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setKbMessage(data.message);
+                setDocTitle("");
+                setDocContent("");
+                setShowAddDoc(false);
+                loadDocuments();
+            } else {
+                setError(data.error || "Failed to add document.");
+            }
+        } catch {
+            setError("Network error.");
+        } finally {
+            setAddingDoc(false);
+        }
+    };
+
+    const deleteDocument = async (id: string) => {
+        try {
+            const res = await fetch(`/api/admin/knowledge?id=${id}`, { method: "DELETE" });
+            if (res.ok) {
+                setKbMessage("Document deleted.");
+                loadDocuments();
+            }
+        } catch {
+            setError("Failed to delete.");
         }
     };
 
@@ -136,22 +204,15 @@ export default function AdminDashboard() {
                 <div className="absolute bottom-0 right-1/4 w-80 h-80 bg-indigo-500/6 rounded-full filter blur-[128px] animate-pulse delay-700" />
             </div>
 
-            {/* Mobile sidebar overlay */}
             {sidebarOpen && (
-                <div
-                    className="fixed inset-0 bg-black/50 z-40 md:hidden"
-                    onClick={() => setSidebarOpen(false)}
-                />
+                <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setSidebarOpen(false)} />
             )}
 
             {/* Sidebar */}
-            <aside
-                className={cn(
-                    "fixed md:relative z-50 md:z-10 h-full w-64 bg-black/40 backdrop-blur-xl border-r border-white/[0.05] flex flex-col transition-transform duration-300",
-                    sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
-                )}
-            >
-                {/* Sidebar header */}
+            <aside className={cn(
+                "fixed md:relative z-50 md:z-10 h-full w-64 bg-black/40 backdrop-blur-xl border-r border-white/[0.05] flex flex-col transition-transform duration-300",
+                sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+            )}>
                 <div className="p-4 border-b border-white/[0.05]">
                     <div className="flex items-center gap-3">
                         <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-violet-500/20">
@@ -161,63 +222,61 @@ export default function AdminDashboard() {
                             <h2 className="text-sm font-semibold text-white/90">Admin Panel</h2>
                             <p className="text-[10px] text-white/30">ChotuBot Dashboard</p>
                         </div>
-                        <button
-                            onClick={() => setSidebarOpen(false)}
-                            className="ml-auto md:hidden text-white/40 hover:text-white/80"
-                        >
+                        <button onClick={() => setSidebarOpen(false)} className="ml-auto md:hidden text-white/40 hover:text-white/80">
                             <X className="w-5 h-5" />
                         </button>
                     </div>
                 </div>
 
-                {/* Nav */}
                 <nav className="flex-1 p-3 space-y-1">
-                    <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white/[0.06] text-white/90 text-sm font-medium transition-all">
+                    <button
+                        onClick={() => { setActiveTab("chat"); setSidebarOpen(false); }}
+                        className={cn(
+                            "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all",
+                            activeTab === "chat" ? "bg-white/[0.06] text-white/90" : "text-white/40 hover:bg-white/[0.03] hover:text-white/60"
+                        )}
+                    >
                         <MessageSquare className="w-4 h-4 text-violet-400" />
                         Chat
                     </button>
                     <button
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-white/40 text-sm transition-all hover:bg-white/[0.03] hover:text-white/60 cursor-not-allowed"
-                        title="Coming in Phase 3"
+                        onClick={() => { setActiveTab("knowledge"); setSidebarOpen(false); }}
+                        className={cn(
+                            "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all",
+                            activeTab === "knowledge" ? "bg-white/[0.06] text-white/90" : "text-white/40 hover:bg-white/[0.03] hover:text-white/60"
+                        )}
                     >
-                        <Database className="w-4 h-4" />
+                        <Database className="w-4 h-4 text-emerald-400" />
                         Knowledge Base
-                        <span className="ml-auto text-[9px] bg-violet-500/20 text-violet-300 px-1.5 py-0.5 rounded-full">
-                            Soon
-                        </span>
+                        {documents.length > 0 && (
+                            <span className="ml-auto text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded-full">
+                                {documents.length}
+                            </span>
+                        )}
                     </button>
                 </nav>
 
-                {/* Logout */}
                 <div className="p-3 border-t border-white/[0.05]">
-                    <button
-                        onClick={handleLogout}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-red-400/70 text-sm transition-all hover:bg-red-500/10 hover:text-red-400"
-                    >
+                    <button onClick={handleLogout} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-red-400/70 text-sm transition-all hover:bg-red-500/10 hover:text-red-400">
                         <LogOut className="w-4 h-4" />
                         Sign Out
                     </button>
                 </div>
             </aside>
 
-            {/* Main content */}
+            {/* Main */}
             <main className="flex-1 flex flex-col relative z-10 min-w-0">
                 {/* Header */}
                 <header className="flex items-center justify-between px-4 md:px-6 py-3 border-b border-white/[0.04] backdrop-blur-xl bg-white/[0.01]">
                     <div className="flex items-center gap-3">
-                        <button
-                            onClick={() => setSidebarOpen(true)}
-                            className="md:hidden text-white/50 hover:text-white/80"
-                        >
+                        <button onClick={() => setSidebarOpen(true)} className="md:hidden text-white/50 hover:text-white/80">
                             <Menu className="w-5 h-5" />
                         </button>
-                        <Bot className="w-5 h-5 text-violet-400" />
+                        {activeTab === "chat" ? <Bot className="w-5 h-5 text-violet-400" /> : <Database className="w-5 h-5 text-emerald-400" />}
                         <h1 className="text-sm font-semibold text-white/80">
-                            Admin Assistant
+                            {activeTab === "chat" ? "Admin Assistant" : "Knowledge Base"}
                         </h1>
-                        <span className="text-[9px] bg-violet-500/15 text-violet-300 px-2 py-0.5 rounded-full">
-                            ADMIN
-                        </span>
+                        <span className="text-[9px] bg-violet-500/15 text-violet-300 px-2 py-0.5 rounded-full">ADMIN</span>
                     </div>
                     <div className="flex items-center gap-2 text-[10px] text-white/30">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -225,150 +284,194 @@ export default function AdminDashboard() {
                     </div>
                 </header>
 
-                {/* Error toast */}
+                {/* Toasts */}
                 <AnimatePresence>
                     {error && (
-                        <motion.div
-                            className="absolute top-16 left-1/2 -translate-x-1/2 z-50 bg-red-500/10 border border-red-500/20 text-red-300 px-4 py-2 rounded-xl text-xs backdrop-blur-xl"
-                            initial={{ opacity: 0, y: -10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -10 }}
-                        >
+                        <motion.div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 bg-red-500/10 border border-red-500/20 text-red-300 px-4 py-2 rounded-xl text-xs backdrop-blur-xl" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
                             {error}
+                        </motion.div>
+                    )}
+                    {kbMessage && (
+                        <motion.div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 px-4 py-2 rounded-xl text-xs backdrop-blur-xl" initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
+                            {kbMessage}
                         </motion.div>
                     )}
                 </AnimatePresence>
 
-                {/* Chat area */}
-                <div
-                    ref={chatWindowRef}
-                    className="flex-1 overflow-y-auto px-4 md:px-6 py-4 space-y-4 chat-scrollbar"
-                >
-                    {messages.length === 0 && !isLoading ? (
-                        <motion.div
-                            className="flex flex-col items-center justify-center h-full text-center"
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                        >
-                            <Shield className="w-12 h-12 text-violet-400/40 mb-4" />
-                            <h2 className="text-lg font-semibold text-white/60 mb-1">
-                                Admin Assistant
-                            </h2>
-                            <p className="text-xs text-white/25 max-w-sm">
-                                Enhanced AI with admin-level access. In Phase 3, this will be
-                                connected to your RAG knowledge base for Rufus-like responses.
-                            </p>
-                        </motion.div>
-                    ) : (
-                        <>
-                            {messages.map((msg) => (
-                                <motion.div
-                                    key={msg.id}
-                                    className={cn(
-                                        "flex gap-3 max-w-[85%]",
-                                        msg.role === "user" ? "ml-auto flex-row-reverse" : "mr-auto"
+                {/* ===== CHAT TAB ===== */}
+                {activeTab === "chat" && (
+                    <>
+                        <div ref={chatWindowRef} className="flex-1 overflow-y-auto px-4 md:px-6 py-4 space-y-4 chat-scrollbar">
+                            {messages.length === 0 && !isLoading ? (
+                                <motion.div className="flex flex-col items-center justify-center h-full text-center" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+                                    <Shield className="w-12 h-12 text-violet-400/40 mb-4" />
+                                    <h2 className="text-lg font-semibold text-white/60 mb-1">Admin Assistant</h2>
+                                    <p className="text-xs text-white/25 max-w-sm">
+                                        RAG-powered AI. Upload documents in the Knowledge Base tab, then ask questions here — the AI will answer from your data.
+                                    </p>
+                                </motion.div>
+                            ) : (
+                                <>
+                                    {messages.map((msg) => (
+                                        <motion.div key={msg.id} className={cn("flex gap-3 max-w-[85%]", msg.role === "user" ? "ml-auto flex-row-reverse" : "mr-auto")} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+                                            <div className={cn("w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5", msg.role === "user" ? "bg-gradient-to-br from-violet-500 to-indigo-600" : "bg-white/[0.05] border border-white/[0.08]")}>
+                                                {msg.role === "user" ? <User className="w-3.5 h-3.5 text-white" /> : <Bot className="w-3.5 h-3.5 text-white/70" />}
+                                            </div>
+                                            <div className="flex flex-col gap-0.5">
+                                                <div className={cn("px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words", msg.role === "user" ? "bg-gradient-to-br from-violet-500 to-indigo-600 text-white rounded-2xl rounded-br-sm" : "bg-white/[0.04] border border-white/[0.06] text-white/85 rounded-2xl rounded-bl-sm")}>
+                                                    {msg.content}
+                                                </div>
+                                                <div className={cn("flex items-center gap-2 px-1", msg.role === "user" ? "justify-end" : "")}>
+                                                    <span className="text-[9px] text-white/20">{msg.time}</span>
+                                                    {msg.ragUsed && msg.role === "assistant" && (
+                                                        <span className="text-[8px] bg-emerald-500/15 text-emerald-400 px-1.5 py-0.5 rounded-full">📚 RAG</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </motion.div>
+                                    ))}
+                                    {isLoading && (
+                                        <motion.div className="flex gap-3 mr-auto" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+                                            <div className="w-7 h-7 rounded-lg bg-white/[0.05] border border-white/[0.08] flex items-center justify-center flex-shrink-0">
+                                                <Bot className="w-3.5 h-3.5 text-white/70" />
+                                            </div>
+                                            <div className="px-3.5 py-2.5 bg-white/[0.04] border border-white/[0.06] rounded-2xl rounded-bl-sm">
+                                                <TextShimmer className="text-sm font-medium [--base-color:theme(colors.violet.400)] [--base-gradient-color:theme(colors.white)] dark:[--base-color:theme(colors.violet.400)] dark:[--base-gradient-color:theme(colors.white)]" duration={1.5}>
+                                                    Searching knowledge base...
+                                                </TextShimmer>
+                                            </div>
+                                        </motion.div>
                                     )}
-                                    initial={{ opacity: 0, y: 8 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                >
-                                    <div
-                                        className={cn(
-                                            "w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5",
-                                            msg.role === "user"
-                                                ? "bg-gradient-to-br from-violet-500 to-indigo-600"
-                                                : "bg-white/[0.05] border border-white/[0.08]"
-                                        )}
-                                    >
-                                        {msg.role === "user" ? (
-                                            <User className="w-3.5 h-3.5 text-white" />
-                                        ) : (
-                                            <Bot className="w-3.5 h-3.5 text-white/70" />
-                                        )}
-                                    </div>
-                                    <div className="flex flex-col gap-0.5">
-                                        <div
-                                            className={cn(
-                                                "px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words",
-                                                msg.role === "user"
-                                                    ? "bg-gradient-to-br from-violet-500 to-indigo-600 text-white rounded-2xl rounded-br-sm"
-                                                    : "bg-white/[0.04] border border-white/[0.06] text-white/85 rounded-2xl rounded-bl-sm"
-                                            )}
-                                        >
-                                            {msg.content}
-                                        </div>
-                                        <span
-                                            className={cn(
-                                                "text-[9px] text-white/20 px-1",
-                                                msg.role === "user" ? "text-right" : ""
-                                            )}
-                                        >
-                                            {msg.time}
-                                        </span>
-                                    </div>
-                                </motion.div>
-                            ))}
+                                </>
+                            )}
+                        </div>
+                        <div className="px-4 md:px-6 pb-4 pt-2 border-t border-white/[0.04] backdrop-blur-xl bg-white/[0.01]">
+                            <div className={cn("flex items-end gap-2 bg-white/[0.03] border rounded-xl p-2 transition-all", input ? "border-violet-500/30 shadow-[0_0_0_3px_rgba(139,92,246,0.08)]" : "border-white/[0.06]")}>
+                                <textarea ref={textareaRef} className="flex-1 bg-transparent border-none outline-none text-white/90 text-sm resize-none placeholder:text-white/20 py-2 px-2 min-h-[44px] max-h-[150px]" placeholder="Ask about your knowledge base..." value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} disabled={isLoading} rows={1} autoFocus />
+                                <motion.button onClick={sendMessage} disabled={!input.trim() || isLoading} whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} className={cn("flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all", input.trim() ? "bg-gradient-to-r from-violet-500 to-indigo-600 text-white shadow-lg shadow-violet-500/20" : "bg-white/[0.05] text-white/30")}>
+                                    <SendIcon className="w-3.5 h-3.5" />
+                                    <span className="hidden sm:inline">Send</span>
+                                </motion.button>
+                            </div>
+                        </div>
+                    </>
+                )}
 
-                            {isLoading && (
+                {/* ===== KNOWLEDGE BASE TAB ===== */}
+                {activeTab === "knowledge" && (
+                    <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6 chat-scrollbar">
+                        {/* Add document button */}
+                        <div className="flex items-center justify-between mb-6">
+                            <div>
+                                <h2 className="text-lg font-semibold text-white/80">Your Documents</h2>
+                                <p className="text-xs text-white/30">Upload text to teach ChotuBot your knowledge</p>
+                            </div>
+                            <motion.button
+                                onClick={() => setShowAddDoc(!showAddDoc)}
+                                whileHover={{ scale: 1.02 }}
+                                whileTap={{ scale: 0.98 }}
+                                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white text-sm font-medium rounded-xl shadow-lg shadow-emerald-500/20"
+                            >
+                                <Plus className="w-4 h-4" />
+                                Add Document
+                            </motion.button>
+                        </div>
+
+                        {/* Add document form */}
+                        <AnimatePresence>
+                            {showAddDoc && (
                                 <motion.div
-                                    className="flex gap-3 mr-auto"
-                                    initial={{ opacity: 0, y: 8 }}
-                                    animate={{ opacity: 1, y: 0 }}
+                                    className="mb-6 p-4 bg-white/[0.03] border border-white/[0.06] rounded-2xl space-y-4"
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: "auto" }}
+                                    exit={{ opacity: 0, height: 0 }}
                                 >
-                                    <div className="w-7 h-7 rounded-lg bg-white/[0.05] border border-white/[0.08] flex items-center justify-center flex-shrink-0">
-                                        <Bot className="w-3.5 h-3.5 text-white/70" />
-                                    </div>
-                                    <div className="px-3.5 py-2.5 bg-white/[0.04] border border-white/[0.06] rounded-2xl rounded-bl-sm">
-                                        <TextShimmer
-                                            className="text-sm font-medium [--base-color:theme(colors.violet.400)] [--base-gradient-color:theme(colors.white)] dark:[--base-color:theme(colors.violet.400)] dark:[--base-gradient-color:theme(colors.white)]"
-                                            duration={1.5}
-                                        >
-                                            Admin AI is thinking...
-                                        </TextShimmer>
+                                    <input
+                                        type="text"
+                                        value={docTitle}
+                                        onChange={(e) => setDocTitle(e.target.value)}
+                                        placeholder="Document title (e.g. Product FAQ)"
+                                        className="w-full bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-3 text-sm text-white/90 placeholder:text-white/20 focus:outline-none focus:border-emerald-500/40"
+                                        maxLength={200}
+                                    />
+                                    <textarea
+                                        value={docContent}
+                                        onChange={(e) => setDocContent(e.target.value)}
+                                        placeholder="Paste your document content here... (FAQ answers, product info, company docs, etc.)"
+                                        className="w-full bg-white/[0.03] border border-white/[0.08] rounded-xl px-4 py-3 text-sm text-white/90 placeholder:text-white/20 focus:outline-none focus:border-emerald-500/40 min-h-[150px] resize-y"
+                                        maxLength={50000}
+                                    />
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-[10px] text-white/20">{docContent.length}/50,000 chars</span>
+                                        <div className="flex gap-2">
+                                            <button onClick={() => setShowAddDoc(false)} className="px-4 py-2 text-sm text-white/40 hover:text-white/60">Cancel</button>
+                                            <motion.button
+                                                onClick={addDocument}
+                                                disabled={!docTitle.trim() || !docContent.trim() || addingDoc}
+                                                whileHover={{ scale: 1.02 }}
+                                                whileTap={{ scale: 0.98 }}
+                                                className={cn(
+                                                    "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all",
+                                                    docTitle.trim() && docContent.trim()
+                                                        ? "bg-gradient-to-r from-emerald-500 to-teal-600 text-white"
+                                                        : "bg-white/[0.05] text-white/30"
+                                                )}
+                                            >
+                                                {addingDoc ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                                                {addingDoc ? "Processing..." : "Upload & Embed"}
+                                            </motion.button>
+                                        </div>
                                     </div>
                                 </motion.div>
                             )}
-                        </>
-                    )}
-                </div>
+                        </AnimatePresence>
 
-                {/* Input */}
-                <div className="px-4 md:px-6 pb-4 pt-2 border-t border-white/[0.04] backdrop-blur-xl bg-white/[0.01]">
-                    <div
-                        className={cn(
-                            "flex items-end gap-2 bg-white/[0.03] border rounded-xl p-2 transition-all",
-                            input
-                                ? "border-violet-500/30 shadow-[0_0_0_3px_rgba(139,92,246,0.08)]"
-                                : "border-white/[0.06]"
+                        {/* Document list */}
+                        {kbLoading ? (
+                            <div className="flex items-center justify-center py-12">
+                                <Loader2 className="w-6 h-6 text-white/30 animate-spin" />
+                            </div>
+                        ) : documents.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center py-16 text-center">
+                                <Database className="w-12 h-12 text-white/10 mb-4" />
+                                <h3 className="text-sm font-medium text-white/40 mb-1">No documents yet</h3>
+                                <p className="text-xs text-white/20 max-w-sm">
+                                    Add documents to teach ChotuBot your knowledge. It will use this data to answer admin questions.
+                                </p>
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                {documents.map((doc) => (
+                                    <motion.div
+                                        key={doc.id}
+                                        className="flex items-start gap-3 p-4 bg-white/[0.02] border border-white/[0.05] rounded-xl group hover:bg-white/[0.04] transition-all"
+                                        initial={{ opacity: 0, y: 5 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                    >
+                                        <div className="w-9 h-9 rounded-lg bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
+                                            <FileText className="w-4 h-4 text-emerald-400" />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <h3 className="text-sm font-medium text-white/80 truncate">{doc.title}</h3>
+                                            <p className="text-xs text-white/30 mt-0.5 line-clamp-2">{doc.preview}</p>
+                                            <div className="flex items-center gap-3 mt-2">
+                                                <span className="text-[10px] text-white/20">{doc.chunksCount} chunks</span>
+                                                <span className="text-[10px] text-white/20">{new Date(doc.createdAt).toLocaleDateString()}</span>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => deleteDocument(doc.id)}
+                                            className="text-white/10 hover:text-red-400 transition-colors p-1"
+                                            title="Delete document"
+                                        >
+                                            <Trash2 className="w-4 h-4" />
+                                        </button>
+                                    </motion.div>
+                                ))}
+                            </div>
                         )}
-                    >
-                        <textarea
-                            ref={textareaRef}
-                            className="flex-1 bg-transparent border-none outline-none text-white/90 text-sm resize-none placeholder:text-white/20 py-2 px-2 min-h-[44px] max-h-[150px]"
-                            placeholder="Ask the admin assistant..."
-                            value={input}
-                            onChange={(e) => setInput(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            disabled={isLoading}
-                            rows={1}
-                            autoFocus
-                        />
-                        <motion.button
-                            onClick={sendMessage}
-                            disabled={!input.trim() || isLoading}
-                            whileHover={{ scale: 1.03 }}
-                            whileTap={{ scale: 0.97 }}
-                            className={cn(
-                                "flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all",
-                                input.trim()
-                                    ? "bg-gradient-to-r from-violet-500 to-indigo-600 text-white shadow-lg shadow-violet-500/20"
-                                    : "bg-white/[0.05] text-white/30"
-                            )}
-                        >
-                            <SendIcon className="w-3.5 h-3.5" />
-                            <span className="hidden sm:inline">Send</span>
-                        </motion.button>
                     </div>
-                </div>
+                )}
             </main>
         </div>
     );
