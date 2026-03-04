@@ -60,7 +60,7 @@ export async function verifyToken(
         const valid = await crypto.subtle.verify(
             "HMAC",
             key,
-            signatureBytes,
+            signatureBytes.buffer as ArrayBuffer,
             new TextEncoder().encode(data)
         );
 
