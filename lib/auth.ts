@@ -84,15 +84,16 @@ export async function verifyToken(
 // ============================
 // Password Verification
 // ============================
-export function verifyCredentials(username: string, password: string): boolean {
+export async function verifyCredentials(username: string, password: string): Promise<boolean> {
     const adminUser = (process.env.ADMIN_USERNAME || "").trim();
     const adminPass = (process.env.ADMIN_PASSWORD || "").trim();
 
     if (!adminUser || !adminPass) return false;
 
-    // Constant-time-ish comparison to prevent timing attacks
-    const userMatch = username === adminUser;
-    const passMatch = password === adminPass;
+    // Use SHA-256 constant-time comparison to prevent timing attacks
+    const { secureCompare } = await import("./security");
+    const userMatch = await secureCompare(username, adminUser);
+    const passMatch = await secureCompare(password, adminPass);
 
     return userMatch && passMatch;
 }

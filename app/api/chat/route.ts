@@ -1,26 +1,24 @@
 import Groq from "groq-sdk";
 import { NextRequest } from "next/server";
+import { trackSession, logChat, logError } from "@/lib/tracking";
 
 // ==================================================
-// RATE LIMITER — In-memory, per-IP, for 10-20 users
+// RATE LIMITER — In-memory, per-IP
 // ==================================================
 const rateLimitStore = new Map<
     string,
     { count: number; firstRequestTime: number }
 >();
-const MAX_REQUESTS = 20; // max requests per window per IP
-const WINDOW_MS = 60 * 1000; // 1 minute window
+const MAX_REQUESTS = 20;
+const WINDOW_MS = 60 * 1000;
 
 function checkRateLimit(ip: string) {
     const now = Date.now();
     const record = rateLimitStore.get(ip);
 
-    // Cleanup old entries (prevent memory leak)
     if (rateLimitStore.size > 100) {
         for (const [key, val] of rateLimitStore) {
-            if (now - val.firstRequestTime > WINDOW_MS) {
-                rateLimitStore.delete(key);
-            }
+            if (now - val.firstRequestTime > WINDOW_MS) rateLimitStore.delete(key);
         }
     }
 
@@ -40,9 +38,6 @@ function checkRateLimit(ip: string) {
     return { allowed: true, remaining: MAX_REQUESTS - record.count };
 }
 
-// ==================================================
-// INPUT SANITIZATION
-// ==================================================
 function sanitizeInput(text: string): string {
     if (typeof text !== "string") return "";
     return text.trim().slice(0, 2000).replace(/\0/g, "");
@@ -67,12 +62,12 @@ function validateMessages(messages: unknown): messages is ChatMessage[] {
     );
 }
 
-// ==================================================
-// API ROUTE HANDLER
-// ==================================================
 export async function POST(request: NextRequest) {
+    const forwarded = request.headers.get("x-forwarded-for");
+    const ip = forwarded ? forwarded.split(",")[0].trim() : "unknown";
+
     try {
-        // --- API Key (server-side only, trimmed to fix newline issues) ---
+        // --- API Key ---
         const apiKey = process.env.GROQ_API_KEY?.trim();
         if (!apiKey || apiKey === "your_groq_api_key_here") {
             return Response.json(
@@ -82,10 +77,7 @@ export async function POST(request: NextRequest) {
         }
 
         // --- Rate Limiting ---
-        const forwarded = request.headers.get("x-forwarded-for");
-        const ip = forwarded ? forwarded.split(",")[0].trim() : "unknown";
         const rateCheck = checkRateLimit(ip);
-
         if (!rateCheck.allowed) {
             return Response.json(
                 {
@@ -101,6 +93,10 @@ export async function POST(request: NextRequest) {
                 }
             );
         }
+
+        // --- Track Session ---
+        const userAgent = request.headers.get("user-agent") || "unknown";
+        const sessionId = await trackSession(ip, userAgent, "/api/chat");
 
         // --- Parse & Validate ---
         let body: { messages?: unknown };
@@ -121,6 +117,12 @@ export async function POST(request: NextRequest) {
             role: msg.role as "user" | "assistant",
             content: sanitizeInput(msg.content),
         }));
+
+        // --- Log user message ---
+        const lastUserMsg = sanitizedMessages[sanitizedMessages.length - 1];
+        if (lastUserMsg && sessionId) {
+            await logChat(sessionId, "user", lastUserMsg.content, "user_chat");
+        }
 
         // --- Call Groq API ---
         const groq = new Groq({ apiKey });
@@ -147,6 +149,11 @@ export async function POST(request: NextRequest) {
             chatCompletion.choices[0]?.message?.content ||
             "Sorry, I could not generate a response.";
 
+        // --- Log AI response ---
+        if (sessionId) {
+            await logChat(sessionId, "assistant", aiResponse, "user_chat");
+        }
+
         return Response.json(
             { message: aiResponse },
             {
@@ -158,6 +165,7 @@ export async function POST(request: NextRequest) {
         );
     } catch (error: unknown) {
         console.error("Chat API Error:", error);
+        await logError("/api/chat", String(error), 500, ip);
 
         const statusError = error as { status?: number };
         if (statusError?.status === 429) {
