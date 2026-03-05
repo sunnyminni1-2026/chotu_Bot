@@ -5,13 +5,17 @@ import { chunkText, embedChunks } from "@/lib/embeddings";
 import { ObjectId } from "mongodb";
 import { cookies } from "next/headers";
 
-// Auth check helper
+// Auth check helper — returns true/false, never throws
 async function checkAdmin(): Promise<boolean> {
-    const cookieStore = await cookies();
-    const token = cookieStore.get(getAuthCookieOptions().name)?.value;
-    if (!token) return false;
-    const payload = await verifyToken(token);
-    return !!(payload && payload.role === "admin");
+    try {
+        const cookieStore = await cookies();
+        const token = cookieStore.get(getAuthCookieOptions().name)?.value;
+        if (!token) return false;
+        const payload = await verifyToken(token);
+        return !!(payload && payload.role === "admin");
+    } catch {
+        return false;
+    }
 }
 
 // ============================
@@ -34,8 +38,8 @@ export async function GET() {
             documents: documents.map((doc) => ({
                 id: doc._id.toString(),
                 title: doc.title,
-                preview: doc.content.slice(0, 150) + (doc.content.length > 150 ? "..." : ""),
-                chunksCount: doc.chunksCount,
+                preview: (doc.content || "").slice(0, 150) + ((doc.content || "").length > 150 ? "..." : ""),
+                chunksCount: doc.chunksCount || 0,
                 createdAt: doc.createdAt,
             })),
         });
@@ -52,6 +56,14 @@ export async function POST(request: NextRequest) {
     try {
         if (!(await checkAdmin())) {
             return Response.json({ error: "Unauthorized." }, { status: 401 });
+        }
+
+        // Check GEMINI_API_KEY before attempting embeddings
+        const geminiKey = (process.env.GEMINI_API_KEY || "").trim();
+        if (!geminiKey) {
+            return Response.json({
+                error: "GEMINI_API_KEY is not configured. Add it to Vercel Environment Variables.",
+            }, { status: 500 });
         }
 
         let body: { title?: string; content?: string };
@@ -90,7 +102,23 @@ export async function POST(request: NextRequest) {
         const chunks = chunkText(content.trim(), title.trim());
 
         // 3. Generate embeddings for each chunk
-        const embeddedChunks = await embedChunks(chunks);
+        let embeddedChunks: { content: string; index: number; embedding: number[] }[] = [];
+        try {
+            embeddedChunks = await embedChunks(chunks);
+        } catch (embedError) {
+            console.error("Embedding error:", embedError);
+            // Document was saved — update with 0 chunks and return partial success
+            await db.collection(COLLECTIONS.DOCUMENTS).updateOne(
+                { _id: docId },
+                { $set: { chunksCount: 0 } }
+            );
+            return Response.json({
+                success: true,
+                message: `Document "${title}" saved but embedding failed. It will be available for text search only.`,
+                documentId: docId.toString(),
+                chunksCount: 0,
+            });
+        }
 
         // 4. Store chunks with embeddings
         if (embeddedChunks.length > 0) {
@@ -120,7 +148,7 @@ export async function POST(request: NextRequest) {
         });
     } catch (error) {
         console.error("Knowledge POST error:", error);
-        return Response.json({ error: "Failed to add document." }, { status: 500 });
+        return Response.json({ error: "Failed to add document. Check server logs." }, { status: 500 });
     }
 }
 

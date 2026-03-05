@@ -69,6 +69,20 @@ export default function AdminDashboard() {
     // Analytics state
     const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
     const [analyticsLoading, setAnalyticsLoading] = useState(false);
+    const [authed, setAuthed] = useState(false);
+
+    // Verify auth on mount
+    useEffect(() => {
+        (async () => {
+            try {
+                const res = await fetch("/api/auth/verify");
+                if (!res.ok) { router.push("/admin/login"); return; }
+                const data = await res.json();
+                if (!data.authenticated) { router.push("/admin/login"); return; }
+                setAuthed(true);
+            } catch { router.push("/admin/login"); }
+        })();
+    }, [router]);
 
     // Auto-scroll
     useEffect(() => {
@@ -82,11 +96,12 @@ export default function AdminDashboard() {
     // Auto-resize textarea
     useEffect(() => { const ta = textareaRef.current; if (ta) { ta.style.height = "44px"; ta.style.height = `${Math.min(ta.scrollHeight, 150)}px`; } }, [input]);
 
-    // Load data on tab switch
+    // Load data on tab switch — only after auth
     useEffect(() => {
+        if (!authed) return;
         if (activeTab === "knowledge") loadDocuments();
         if (activeTab === "analytics") loadAnalytics();
-    }, [activeTab]);
+    }, [activeTab, authed]);
 
     const loadAnalytics = async () => {
         setAnalyticsLoading(true);
