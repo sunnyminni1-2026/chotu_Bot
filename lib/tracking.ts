@@ -108,74 +108,114 @@ export async function logError(
 // Query Functions (for AI Agent tools)
 // ============================
 export async function countSessions(hoursBack: number = 24): Promise<number> {
-    const db = await getDatabase();
-    const since = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
-    return db.collection(COLLECTIONS.SESSIONS).countDocuments({
-        lastSeen: { $gte: since },
-    });
+    try {
+        const db = await getDatabase();
+        const since = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
+        return await db.collection(COLLECTIONS.SESSIONS).countDocuments({
+            lastSeen: { $gte: since },
+        });
+    } catch (error) {
+        console.error("countSessions error:", error);
+        return 0;
+    }
 }
 
 export async function countChats(hoursBack: number = 24, source?: string): Promise<number> {
-    const db = await getDatabase();
-    const since = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
-    const filter: Record<string, unknown> = { timestamp: { $gte: since } };
-    if (source) filter.source = source;
-    return db.collection(COLLECTIONS.CHAT_LOGS).countDocuments(filter);
+    try {
+        const db = await getDatabase();
+        const since = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
+        const filter: Record<string, unknown> = { timestamp: { $gte: since } };
+        if (source) filter.source = source;
+        return await db.collection(COLLECTIONS.CHAT_LOGS).countDocuments(filter);
+    } catch (error) {
+        console.error("countChats error:", error);
+        return 0;
+    }
 }
 
 export async function getTopUsers(limit: number = 5, hoursBack: number = 24) {
-    const db = await getDatabase();
-    const since = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
-    return db.collection(COLLECTIONS.CHAT_LOGS).aggregate([
-        { $match: { timestamp: { $gte: since }, role: "user" } },
-        { $group: { _id: "$sessionId", messageCount: { $sum: 1 }, lastMessage: { $max: "$timestamp" } } },
-        { $sort: { messageCount: -1 } },
-        { $limit: limit },
-    ]).toArray();
+    try {
+        const db = await getDatabase();
+        const since = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
+        return await db.collection(COLLECTIONS.CHAT_LOGS).aggregate([
+            { $match: { timestamp: { $gte: since }, role: "user" } },
+            { $group: { _id: "$sessionId", messageCount: { $sum: 1 }, lastMessage: { $max: "$timestamp" } } },
+            { $sort: { messageCount: -1 } },
+            { $limit: limit },
+        ]).toArray();
+    } catch (error) {
+        console.error("getTopUsers error:", error);
+        return [];
+    }
 }
 
 export async function searchUserSession(query: string) {
-    const db = await getDatabase();
-    return db.collection(COLLECTIONS.SESSIONS).find({
-        sessionId: { $regex: query, $options: "i" },
-    }).limit(10).toArray();
+    try {
+        const db = await getDatabase();
+        return await db.collection(COLLECTIONS.SESSIONS).find({
+            sessionId: { $regex: query, $options: "i" },
+        }).limit(10).toArray();
+    } catch (error) {
+        console.error("searchUserSession error:", error);
+        return [];
+    }
 }
 
 export async function getRecentErrors(limit: number = 10, hoursBack: number = 24) {
-    const db = await getDatabase();
-    const since = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
-    return db.collection(COLLECTIONS.ERROR_LOGS)
-        .find({ timestamp: { $gte: since } })
-        .sort({ timestamp: -1 })
-        .limit(limit)
-        .toArray();
+    try {
+        const db = await getDatabase();
+        const since = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
+        return await db.collection(COLLECTIONS.ERROR_LOGS)
+            .find({ timestamp: { $gte: since } })
+            .sort({ timestamp: -1 })
+            .limit(limit)
+            .toArray();
+    } catch (error) {
+        console.error("getRecentErrors error:", error);
+        return [];
+    }
 }
 
 export async function getSystemHealth() {
-    const db = await getDatabase();
-    const [sessions, chats, errors, documents, chunks] = await Promise.all([
-        db.collection(COLLECTIONS.SESSIONS).estimatedDocumentCount(),
-        db.collection(COLLECTIONS.CHAT_LOGS).estimatedDocumentCount(),
-        db.collection(COLLECTIONS.ERROR_LOGS).estimatedDocumentCount(),
-        db.collection("documents").estimatedDocumentCount(),
-        db.collection("chunks").estimatedDocumentCount(),
-    ]);
-    return {
-        totalSessions: sessions,
-        totalChats: chats,
-        totalErrors: errors,
-        knowledgeDocs: documents,
-        knowledgeChunks: chunks,
-        dbStatus: "connected",
-        timestamp: new Date().toISOString(),
-    };
+    try {
+        const db = await getDatabase();
+        const [sessions, chats, errors, documents, chunks] = await Promise.all([
+            db.collection(COLLECTIONS.SESSIONS).estimatedDocumentCount(),
+            db.collection(COLLECTIONS.CHAT_LOGS).estimatedDocumentCount(),
+            db.collection(COLLECTIONS.ERROR_LOGS).estimatedDocumentCount(),
+            db.collection("documents").estimatedDocumentCount(),
+            db.collection("chunks").estimatedDocumentCount(),
+        ]);
+        return {
+            totalSessions: sessions,
+            totalChats: chats,
+            totalErrors: errors,
+            knowledgeDocs: documents,
+            knowledgeChunks: chunks,
+            dbStatus: "connected",
+            timestamp: new Date().toISOString(),
+        };
+    } catch (error) {
+        console.error("getSystemHealth error:", error);
+        return {
+            totalSessions: 0, totalChats: 0, totalErrors: 0,
+            knowledgeDocs: 0, knowledgeChunks: 0,
+            dbStatus: "error", timestamp: new Date().toISOString(),
+        };
+    }
 }
 
 export async function getChatHistory(sessionId: string, limit: number = 20) {
-    const db = await getDatabase();
-    return db.collection(COLLECTIONS.CHAT_LOGS)
-        .find({ sessionId })
-        .sort({ timestamp: -1 })
-        .limit(limit)
-        .toArray();
+    try {
+        const db = await getDatabase();
+        return await db.collection(COLLECTIONS.CHAT_LOGS)
+            .find({ sessionId })
+            .sort({ timestamp: -1 })
+            .limit(limit)
+            .toArray();
+    } catch (error) {
+        console.error("getChatHistory error:", error);
+        return [];
+    }
 }
+
