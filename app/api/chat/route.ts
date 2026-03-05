@@ -94,9 +94,9 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // --- Track Session ---
+        // --- Track Session (don't block on it) ---
         const userAgent = request.headers.get("user-agent") || "unknown";
-        const sessionId = await trackSession(ip, userAgent, "/api/chat");
+        const sessionPromise = trackSession(ip, userAgent, "/api/chat");
 
         // --- Parse & Validate ---
         let body: { messages?: unknown };
@@ -118,21 +118,23 @@ export async function POST(request: NextRequest) {
             content: sanitizeInput(msg.content),
         }));
 
-        // --- Log user message ---
+        // --- Log user message (non-blocking) ---
         const lastUserMsg = sanitizedMessages[sanitizedMessages.length - 1];
-        if (lastUserMsg && sessionId) {
-            await logChat(sessionId, "user", lastUserMsg.content, "user_chat");
-        }
+        sessionPromise.then((sessionId) => {
+            if (lastUserMsg && sessionId) {
+                logChat(sessionId, "user", lastUserMsg.content, "user_chat");
+            }
+        });
 
-        // --- Call Groq API ---
+        // --- Call Groq API with STREAMING ---
         const groq = new Groq({ apiKey });
 
-        const chatCompletion = await groq.chat.completions.create({
+        const stream = await groq.chat.completions.create({
             messages: [
                 {
                     role: "system",
                     content:
-                        "You are ChotuBot, a friendly and helpful AI assistant. " +
+                        "You are ChotuBot, a friendly and helpful AI assistant for businesses. " +
                         "Keep responses concise, clear, and helpful. " +
                         "Be conversational but informative. " +
                         "If you don't know something, say so honestly.",
@@ -143,26 +145,53 @@ export async function POST(request: NextRequest) {
             temperature: 0.7,
             max_tokens: 1024,
             top_p: 1,
+            stream: true,
         });
 
-        const aiResponse =
-            chatCompletion.choices[0]?.message?.content ||
-            "Sorry, I could not generate a response.";
+        // --- Stream response via SSE ---
+        let fullResponse = "";
 
-        // --- Log AI response ---
-        if (sessionId) {
-            await logChat(sessionId, "assistant", aiResponse, "user_chat");
-        }
+        const readableStream = new ReadableStream({
+            async start(controller) {
+                const encoder = new TextEncoder();
+                try {
+                    for await (const chunk of stream) {
+                        const content = chunk.choices[0]?.delta?.content || "";
+                        if (content) {
+                            fullResponse += content;
+                            controller.enqueue(
+                                encoder.encode(`data: ${JSON.stringify({ content })}\n\n`)
+                            );
+                        }
+                    }
+                    // Send done signal
+                    controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                    controller.close();
 
-        return Response.json(
-            { message: aiResponse },
-            {
-                status: 200,
-                headers: {
-                    "X-RateLimit-Remaining": String(rateCheck.remaining),
-                },
-            }
-        );
+                    // Log the full AI response (non-blocking)
+                    sessionPromise.then((sessionId) => {
+                        if (sessionId && fullResponse) {
+                            logChat(sessionId, "assistant", fullResponse, "user_chat");
+                        }
+                    });
+                } catch (err) {
+                    controller.enqueue(
+                        encoder.encode(`data: ${JSON.stringify({ error: "Stream error" })}\n\n`)
+                    );
+                    controller.close();
+                    console.error("Stream error:", err);
+                }
+            },
+        });
+
+        return new Response(readableStream, {
+            headers: {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                Connection: "keep-alive",
+                "X-RateLimit-Remaining": String(rateCheck.remaining),
+            },
+        });
     } catch (error: unknown) {
         console.error("Chat API Error:", error);
         await logError("/api/chat", String(error), 500, ip);

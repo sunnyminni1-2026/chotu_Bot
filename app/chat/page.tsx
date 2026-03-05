@@ -66,6 +66,16 @@ export default function Home() {
         setIsLoading(true);
         setError(null);
 
+        // Create a placeholder for the streaming AI message
+        const aiMessageId = Date.now() + 1;
+        const aiMessage: Message = {
+            id: aiMessageId,
+            role: "assistant",
+            content: "",
+            time: getTime(),
+        };
+        setMessages((prev) => [...prev, aiMessage]);
+
         try {
             const res = await fetch("/api/chat", {
                 method: "POST",
@@ -78,27 +88,74 @@ export default function Home() {
                 }),
             });
 
-            const data = await res.json();
-
+            // Check for non-stream error responses
             if (!res.ok) {
-                if (res.status === 429) {
-                    setError("Rate limit reached. Please wait a moment.");
+                const contentType = res.headers.get("content-type") || "";
+                if (contentType.includes("application/json")) {
+                    const data = await res.json();
+                    if (res.status === 429) {
+                        setError("Rate limit reached. Please wait a moment.");
+                    } else {
+                        setError(data.error || "Something went wrong.");
+                    }
                 } else {
-                    setError(data.error || "Something went wrong.");
+                    setError("Something went wrong.");
                 }
+                // Remove the empty AI message placeholder
+                setMessages((prev) => prev.filter((m) => m.id !== aiMessageId));
                 return;
             }
 
-            const aiMessage: Message = {
-                id: Date.now() + 1,
-                role: "assistant",
-                content: data.message,
-                time: getTime(),
-            };
+            // --- STREAMING: Read SSE chunks ---
+            const reader = res.body?.getReader();
+            if (!reader) {
+                setError("Streaming not supported.");
+                setMessages((prev) => prev.filter((m) => m.id !== aiMessageId));
+                return;
+            }
 
-            setMessages((prev) => [...prev, aiMessage]);
+            const decoder = new TextDecoder();
+            let buffer = "";
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+
+                // Process complete SSE messages
+                const lines = buffer.split("\n");
+                buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+                for (const line of lines) {
+                    if (line.startsWith("data: ")) {
+                        const data = line.slice(6).trim();
+                        if (data === "[DONE]") break;
+
+                        try {
+                            const parsed = JSON.parse(data);
+                            if (parsed.content) {
+                                // Append content to the AI message
+                                setMessages((prev) =>
+                                    prev.map((m) =>
+                                        m.id === aiMessageId
+                                            ? { ...m, content: m.content + parsed.content }
+                                            : m
+                                    )
+                                );
+                            }
+                            if (parsed.error) {
+                                setError(parsed.error);
+                            }
+                        } catch {
+                            // skip malformed JSON
+                        }
+                    }
+                }
+            }
         } catch {
             setError("Network error. Please check your connection.");
+            setMessages((prev) => prev.filter((m) => m.id !== aiMessageId));
         } finally {
             setIsLoading(false);
             textareaRef.current?.focus();
@@ -219,7 +276,14 @@ export default function Home() {
                                                 : "bg-white/[0.04] border border-white/[0.06] text-white/85 rounded-2xl rounded-bl-sm"
                                         )}
                                     >
-                                        {msg.content}
+                                        {msg.content || (
+                                            <TextShimmer
+                                                className="text-sm font-medium [--base-color:theme(colors.violet.400)] [--base-gradient-color:theme(colors.white)]"
+                                                duration={1.5}
+                                            >
+                                                ChotuBot is thinking...
+                                            </TextShimmer>
+                                        )}
                                     </div>
                                     <span
                                         className={cn(
@@ -232,27 +296,6 @@ export default function Home() {
                                 </div>
                             </motion.div>
                         ))}
-
-                        {/* Typing indicator with shimmer */}
-                        {isLoading && (
-                            <motion.div
-                                className="flex gap-3 mr-auto"
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                            >
-                                <div className="w-8 h-8 rounded-lg bg-white/[0.05] border border-white/[0.08] flex items-center justify-center flex-shrink-0">
-                                    <Bot className="w-4 h-4 text-white/70" />
-                                </div>
-                                <div className="px-4 py-3 bg-white/[0.04] border border-white/[0.06] rounded-2xl rounded-bl-sm">
-                                    <TextShimmer
-                                        className="text-sm font-medium [--base-color:theme(colors.violet.400)] [--base-gradient-color:theme(colors.white)] dark:[--base-color:theme(colors.violet.400)] dark:[--base-gradient-color:theme(colors.white)]"
-                                        duration={1.5}
-                                    >
-                                        ChotuBot is thinking...
-                                    </TextShimmer>
-                                </div>
-                            </motion.div>
-                        )}
                     </>
                 )}
             </div>
