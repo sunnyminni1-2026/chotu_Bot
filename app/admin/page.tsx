@@ -16,6 +16,12 @@ import {
     Trash2,
     FileText,
     Loader2,
+    BarChart3,
+    Check,
+    Star,
+    Users,
+    AlertTriangle,
+    TrendingUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TextShimmer } from "@/components/ui/text-shimmer";
@@ -37,7 +43,19 @@ interface KBDocument {
     createdAt: string;
 }
 
-type Tab = "chat" | "knowledge";
+type Tab = "chat" | "knowledge" | "analytics";
+
+interface AnalyticsData {
+    overview: {
+        totalSessions: number; sessions24h: number; sessions7d: number;
+        totalChats: number; chats24h: number; chats7d: number;
+        totalErrors: number; errors24h: number;
+        knowledgeDocs: number; knowledgeChunks: number;
+    };
+    usage: { sessionsUsed: number; messagesUsed: number; docsUsed: number };
+    chartData: { _id: string; count: number }[];
+    plan: string;
+}
 
 export default function AdminDashboard() {
     const [activeTab, setActiveTab] = useState<Tab>("chat");
@@ -58,6 +76,10 @@ export default function AdminDashboard() {
     const [docContent, setDocContent] = useState("");
     const [addingDoc, setAddingDoc] = useState(false);
     const [kbMessage, setKbMessage] = useState<string | null>(null);
+
+    // Analytics state
+    const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+    const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
     // Auto-scroll
     useEffect(() => {
@@ -90,10 +112,21 @@ export default function AdminDashboard() {
         }
     }, [input]);
 
-    // Load KB documents when tab switches
+    // Load KB documents / analytics when tab switches
     useEffect(() => {
         if (activeTab === "knowledge") loadDocuments();
+        if (activeTab === "analytics") loadAnalytics();
     }, [activeTab]);
+
+    const loadAnalytics = async () => {
+        setAnalyticsLoading(true);
+        try {
+            const res = await fetch("/api/admin/analytics");
+            const data = await res.json();
+            if (res.ok) setAnalytics(data);
+        } catch { setError("Failed to load analytics."); }
+        finally { setAnalyticsLoading(false); }
+    };
 
     const getTime = () =>
         new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -254,6 +287,16 @@ export default function AdminDashboard() {
                             </span>
                         )}
                     </button>
+                    <button
+                        onClick={() => { setActiveTab("analytics"); setSidebarOpen(false); }}
+                        className={cn(
+                            "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all",
+                            activeTab === "analytics" ? "bg-white/[0.06] text-white/90" : "text-white/40 hover:bg-white/[0.03] hover:text-white/60"
+                        )}
+                    >
+                        <BarChart3 className="w-4 h-4 text-amber-400" />
+                        Analytics & Billing
+                    </button>
                 </nav>
 
                 <div className="p-3 border-t border-white/[0.05]">
@@ -272,9 +315,9 @@ export default function AdminDashboard() {
                         <button onClick={() => setSidebarOpen(true)} className="md:hidden text-white/50 hover:text-white/80">
                             <Menu className="w-5 h-5" />
                         </button>
-                        {activeTab === "chat" ? <Bot className="w-5 h-5 text-violet-400" /> : <Database className="w-5 h-5 text-emerald-400" />}
+                        {activeTab === "chat" ? <Bot className="w-5 h-5 text-violet-400" /> : activeTab === "knowledge" ? <Database className="w-5 h-5 text-emerald-400" /> : <BarChart3 className="w-5 h-5 text-amber-400" />}
                         <h1 className="text-sm font-semibold text-white/80">
-                            {activeTab === "chat" ? "Admin Assistant" : "Knowledge Base"}
+                            {activeTab === "chat" ? "Admin Assistant" : activeTab === "knowledge" ? "Knowledge Base" : "Analytics & Billing"}
                         </h1>
                         <span className="text-[9px] bg-violet-500/15 text-violet-300 px-2 py-0.5 rounded-full">ADMIN</span>
                     </div>
@@ -468,6 +511,122 @@ export default function AdminDashboard() {
                                         </button>
                                     </motion.div>
                                 ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* ===== ANALYTICS & BILLING TAB ===== */}
+                {activeTab === "analytics" && (
+                    <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6 chat-scrollbar">
+                        {analyticsLoading ? (
+                            <div className="flex items-center justify-center py-12">
+                                <Loader2 className="w-6 h-6 text-white/30 animate-spin" />
+                            </div>
+                        ) : analytics ? (
+                            <div className="space-y-6">
+                                {/* Stats Grid */}
+                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                                    {[
+                                        { label: "Users (24h)", value: analytics.overview.sessions24h, total: analytics.overview.totalSessions, icon: Users, color: "violet" },
+                                        { label: "Messages (24h)", value: analytics.overview.chats24h, total: analytics.overview.totalChats, icon: MessageSquare, color: "emerald" },
+                                        { label: "Errors (24h)", value: analytics.overview.errors24h, total: analytics.overview.totalErrors, icon: AlertTriangle, color: "rose" },
+                                        { label: "Knowledge Docs", value: analytics.overview.knowledgeDocs, total: analytics.overview.knowledgeChunks, icon: Database, color: "blue" },
+                                    ].map((stat) => (
+                                        <div key={stat.label} className="p-4 bg-white/[0.02] border border-white/[0.05] rounded-xl">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <stat.icon className={`w-4 h-4 text-${stat.color}-400`} />
+                                                <span className="text-[10px] text-white/30">{stat.label}</span>
+                                            </div>
+                                            <div className="text-2xl font-bold text-white/90">{stat.value}</div>
+                                            <div className="text-[10px] text-white/20 mt-0.5">Total: {stat.total}</div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Usage Bars */}
+                                <div className="p-5 bg-white/[0.02] border border-white/[0.05] rounded-xl">
+                                    <h3 className="text-sm font-semibold text-white/70 mb-4 flex items-center gap-2">
+                                        <TrendingUp className="w-4 h-4 text-amber-400" />Free Tier Usage
+                                    </h3>
+                                    <div className="space-y-4">
+                                        {[
+                                            { label: "Sessions", pct: analytics.usage.sessionsUsed, color: "bg-violet-500" },
+                                            { label: "Messages", pct: analytics.usage.messagesUsed, color: "bg-emerald-500" },
+                                            { label: "Documents", pct: analytics.usage.docsUsed, color: "bg-blue-500" },
+                                        ].map((bar) => (
+                                            <div key={bar.label}>
+                                                <div className="flex justify-between text-xs text-white/40 mb-1">
+                                                    <span>{bar.label}</span>
+                                                    <span>{Math.min(bar.pct, 100)}%</span>
+                                                </div>
+                                                <div className="h-2 bg-white/[0.04] rounded-full overflow-hidden">
+                                                    <div className={`h-full ${bar.color} rounded-full transition-all duration-700`} style={{ width: `${Math.min(bar.pct, 100)}%` }} />
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Chat Volume Chart (simple bars) */}
+                                {analytics.chartData.length > 0 && (
+                                    <div className="p-5 bg-white/[0.02] border border-white/[0.05] rounded-xl">
+                                        <h3 className="text-sm font-semibold text-white/70 mb-4">Chat Volume (7 days)</h3>
+                                        <div className="flex items-end gap-2 h-32">
+                                            {analytics.chartData.map((day) => {
+                                                const maxCount = Math.max(...analytics.chartData.map((d) => d.count), 1);
+                                                const heightPct = (day.count / maxCount) * 100;
+                                                return (
+                                                    <div key={day._id} className="flex-1 flex flex-col items-center gap-1">
+                                                        <span className="text-[9px] text-white/30">{day.count}</span>
+                                                        <div className="w-full bg-white/[0.04] rounded-t-md overflow-hidden" style={{ height: '100px' }}>
+                                                            <div className="w-full bg-gradient-to-t from-violet-500 to-indigo-500 rounded-t-md transition-all" style={{ height: `${heightPct}%`, marginTop: `${100 - heightPct}%` }} />
+                                                        </div>
+                                                        <span className="text-[8px] text-white/20">{day._id.slice(5)}</span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Plans */}
+                                <div>
+                                    <h3 className="text-sm font-semibold text-white/70 mb-4">Your Plan</h3>
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                        {[
+                                            { name: "Free", price: "₹0", features: ["100 msgs/day", "1 doc", "Basic analytics"], current: true },
+                                            { name: "Pro", price: "₹499/mo", features: ["Unlimited msgs", "50 docs", "AI tools", "Priority"], current: false },
+                                            { name: "Enterprise", price: "Custom", features: ["Everything", "API", "SLA", "White-label"], current: false },
+                                        ].map((plan) => (
+                                            <div key={plan.name} className={cn("p-4 rounded-xl border", plan.current ? "bg-violet-500/5 border-violet-500/20" : "bg-white/[0.02] border-white/[0.05]")}>
+                                                <div className="flex items-center gap-2 mb-2">
+                                                    <span className="text-sm font-semibold text-white/80">{plan.name}</span>
+                                                    {plan.current && <span className="text-[8px] bg-violet-500/20 text-violet-300 px-1.5 py-0.5 rounded-full">CURRENT</span>}
+                                                </div>
+                                                <div className="text-xl font-bold text-white/90 mb-3">{plan.price}</div>
+                                                <ul className="space-y-1.5">
+                                                    {plan.features.map((f) => (
+                                                        <li key={f} className="flex items-center gap-1.5 text-[11px] text-white/40">
+                                                            <Check className="w-3 h-3 text-emerald-400" />{f}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                                {!plan.current && (
+                                                    <button className="w-full mt-3 py-2 text-[11px] font-medium rounded-lg bg-white/[0.04] text-white/40 hover:bg-white/[0.08] border border-white/[0.06]">
+                                                        {plan.price === "Custom" ? "Contact Us" : "Upgrade"}
+                                                    </button>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col items-center justify-center py-16 text-center">
+                                <BarChart3 className="w-12 h-12 text-white/10 mb-4" />
+                                <h3 className="text-sm font-medium text-white/40">No analytics data yet</h3>
+                                <p className="text-xs text-white/20 mt-1">Start chatting to generate data</p>
                             </div>
                         )}
                     </div>
