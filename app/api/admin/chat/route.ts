@@ -1,4 +1,6 @@
 import Groq from "groq-sdk";
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type GroqTool = any;
 import { NextRequest } from "next/server";
 import { verifyToken, getAuthCookieOptions } from "@/lib/auth";
 import { generateEmbedding } from "@/lib/embeddings";
@@ -59,7 +61,7 @@ function validateMessages(messages: unknown): messages is ChatMessage[] {
 // ============================
 // AI AGENT TOOL DEFINITIONS
 // ============================
-const AGENT_TOOLS: Groq.Chat.Completions.ChatCompletionTool[] = [
+const AGENT_TOOLS: GroqTool[] = [
     {
         type: "function",
         function: {
@@ -255,7 +257,7 @@ async function ragSearch(query: string): Promise<string> {
                     { $project: { content: 1, score: { $meta: "vectorSearchScore" } } },
                 ])
                 .toArray();
-            if (results.length > 0) return results.map((r) => r.content).join("\n\n---\n\n");
+            if (results.length > 0) return results.map((r: Record<string, string>) => r.content).join("\n\n---\n\n");
         } catch {
             // Vector search not available, fallback
         }
@@ -265,10 +267,10 @@ async function ragSearch(query: string): Promise<string> {
             .sort({ score: { $meta: "textScore" } })
             .limit(5)
             .toArray();
-        if (textResults.length > 0) return textResults.map((r) => r.content).join("\n\n---\n\n");
+        if (textResults.length > 0) return textResults.map((r: Record<string, string>) => r.content).join("\n\n---\n\n");
 
         const recent = await chunksCollection.find({}).sort({ createdAt: -1 }).limit(3).toArray();
-        return recent.map((r) => r.content).join("\n\n---\n\n");
+        return recent.map((r: Record<string, string>) => r.content).join("\n\n---\n\n");
     } catch {
         return "";
     }
@@ -325,11 +327,14 @@ export async function POST(request: NextRequest) {
             "After getting tool results, format them nicely in your response with key numbers highlighted. " +
             "If the admin uses broken English or informal language, understand the intent and respond properly.";
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const allMessages: any[] = [
+            { role: "system", content: systemPrompt },
+            ...sanitizedMessages,
+        ];
+
         let completion = await groq.chat.completions.create({
-            messages: [
-                { role: "system", content: systemPrompt },
-                ...sanitizedMessages,
-            ],
+            messages: allMessages,
             model: "llama-3.3-70b-versatile",
             temperature: 0.5,
             max_tokens: 2048,
@@ -341,11 +346,6 @@ export async function POST(request: NextRequest) {
         let toolsUsed = false;
 
         // Handle tool calls (iterative — LLM may call multiple tools)
-        const allMessages: Groq.Chat.Completions.ChatCompletionMessageParam[] = [
-            { role: "system", content: systemPrompt },
-            ...sanitizedMessages,
-        ];
-
         let iterations = 0;
         while (responseMessage?.tool_calls && responseMessage.tool_calls.length > 0 && iterations < 3) {
             toolsUsed = true;
@@ -401,3 +401,4 @@ export async function POST(request: NextRequest) {
         return Response.json({ error: "Something went wrong." }, { status: 500 });
     }
 }
+
