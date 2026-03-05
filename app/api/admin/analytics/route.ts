@@ -86,6 +86,10 @@ export async function GET(request: NextRequest) {
             chartData: chatsByDay,
             limits: freeTierLimits,
             plan: "free",
+        }, {
+            headers: {
+                "Cache-Control": "s-maxage=30, stale-while-revalidate=60",
+            },
         });
     } catch (error) {
         console.error("Analytics error:", error);

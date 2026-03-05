@@ -9,12 +9,20 @@
   :root {
     --background: 240 10% 4%;
     --foreground: 240 10% 92%;
+    --card: 240 10% 6%;
+    --card-foreground: 240 10% 92%;
+    --popover: 240 10% 6%;
+    --popover-foreground: 240 10% 92%;
     --primary: 258 65% 60%;
     --primary-foreground: 0 0% 100%;
+    --secondary: 240 10% 14%;
+    --secondary-foreground: 240 10% 92%;
     --muted: 240 10% 14%;
     --muted-foreground: 240 6% 55%;
     --accent: 258 50% 70%;
     --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
     --border: 240 6% 15%;
     --input: 240 6% 15%;
     --ring: 258 65% 60%;

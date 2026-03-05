@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 export async function middleware(request: NextRequest) {
     const { pathname } = request.nextUrl;
 
-    // Only protect /admin routes (except /admin/login)
+    // Protect /admin routes (except /admin/login)
     if (pathname.startsWith("/admin") && !pathname.startsWith("/admin/login")) {
         const token = request.cookies.get("chotubot-auth")?.value;
 
@@ -11,13 +11,11 @@ export async function middleware(request: NextRequest) {
             return NextResponse.redirect(new URL("/admin/login", request.url));
         }
 
-        // Basic token structure check (full verification happens in API routes)
         const parts = token.split(".");
         if (parts.length !== 3) {
             return NextResponse.redirect(new URL("/admin/login", request.url));
         }
 
-        // Check token expiry from payload
         try {
             const payload = JSON.parse(atob(parts[1]));
             if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
@@ -30,9 +28,21 @@ export async function middleware(request: NextRequest) {
         }
     }
 
+    // Protect /chat — require Google OAuth session
+    if (pathname.startsWith("/chat")) {
+        // NextAuth stores session in these cookies
+        const sessionToken =
+            request.cookies.get("next-auth.session-token")?.value ||
+            request.cookies.get("__Secure-next-auth.session-token")?.value;
+
+        if (!sessionToken) {
+            return NextResponse.redirect(new URL("/auth/signin", request.url));
+        }
+    }
+
     return NextResponse.next();
 }
 
 export const config = {
-    matcher: ["/admin/:path*"],
+    matcher: ["/admin/:path*", "/chat/:path*"],
 };
