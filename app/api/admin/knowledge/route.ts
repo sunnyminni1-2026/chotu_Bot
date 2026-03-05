@@ -35,7 +35,7 @@ export async function GET() {
             .toArray();
 
         return Response.json({
-            documents: documents.map((doc) => ({
+            documents: documents.map((doc: any) => ({
                 id: doc._id.toString(),
                 title: doc.title,
                 preview: (doc.content || "").slice(0, 150) + ((doc.content || "").length > 150 ? "..." : ""),

@@ -52,7 +52,7 @@ function validateMessages(messages: unknown): messages is ChatMessage[] {
     if (!Array.isArray(messages)) return false;
     if (messages.length === 0 || messages.length > 50) return false;
     return messages.every(
-        (msg) =>
+        (msg: any) =>
             msg &&
             typeof msg.role === "string" &&
             typeof msg.content === "string" &&
@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const sanitizedMessages = body.messages.map((msg) => ({
+        const sanitizedMessages = (body.messages as any[]).map((msg: any) => ({
             role: msg.role as "user" | "assistant",
             content: sanitizeInput(msg.content),
         }));
