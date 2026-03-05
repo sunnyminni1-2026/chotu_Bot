@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase } from "@/lib/mongodb";
-import { getServerSession } from "next-auth";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "../../auth/[...nextauth]/route";
+import { ObjectId } from "mongodb";
 
 // GET /api/chat/history — get chat history for current user
 export async function GET(request: NextRequest) {
     try {
-        const session = await getServerSession();
+        const session = await getServerSession(authOptions);
         if (!session?.user?.email) {
             return NextResponse.json({ conversations: [] });
         }
@@ -19,7 +21,7 @@ export async function GET(request: NextRequest) {
             .toArray();
 
         return NextResponse.json({
-            conversations: convos.map((c) => ({
+            conversations: convos.map((c: any) => ({
                 id: c._id.toString(),
                 title: c.title || "New Chat",
                 messages: c.messages || [],
@@ -36,7 +38,7 @@ export async function GET(request: NextRequest) {
 // POST /api/chat/history — save/update a conversation
 export async function POST(request: NextRequest) {
     try {
-        const session = await getServerSession();
+        const session = await getServerSession(authOptions);
         if (!session?.user?.email) {
             return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
         }
@@ -51,10 +53,10 @@ export async function POST(request: NextRequest) {
         const db = await getDatabase();
         const collection = db.collection("conversations");
 
-        if (conversationId) {
+        if (conversationId && conversationId !== "null") {
             // Update existing conversation
-            await collection.updateOne(
-                { _id: conversationId, userEmail: session.user.email },
+            const updateResult = await collection.updateOne(
+                { _id: new ObjectId(conversationId), userEmail: session.user.email },
                 {
                     $set: {
                         messages,
@@ -63,6 +65,20 @@ export async function POST(request: NextRequest) {
                     },
                 }
             );
+
+            if (updateResult.matchedCount === 0) {
+                // If ID didn't match (e.g. invalid type or not found), create new
+                const result = await collection.insertOne({
+                    userEmail: session.user.email,
+                    userName: session.user.name,
+                    messages,
+                    title: title || messages[0]?.content?.slice(0, 50) || "New Chat",
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                });
+                return NextResponse.json({ conversationId: result.insertedId.toString() });
+            }
+
             return NextResponse.json({ conversationId });
         } else {
             // Create new conversation

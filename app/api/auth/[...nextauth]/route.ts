@@ -2,7 +2,7 @@ import NextAuth from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 import { getDatabase } from "@/lib/mongodb";
 
-const handler = NextAuth({
+export const authOptions = {
     providers: [
         GoogleProvider({
             clientId: (process.env.GOOGLE_CLIENT_ID || "").trim(),
@@ -10,11 +10,11 @@ const handler = NextAuth({
         }),
     ],
     session: {
-        strategy: "jwt",
+        strategy: "jwt" as const,
         maxAge: 30 * 24 * 60 * 60, // 30 days
     },
     callbacks: {
-        async signIn({ user }) {
+        async signIn({ user }: { user: any }) {
             try {
                 const db = await getDatabase();
                 const usersCollection = db.collection("users");
@@ -43,15 +43,15 @@ const handler = NextAuth({
                 return true; // Still allow sign-in even if DB fails
             }
         },
-        async jwt({ token, user }) {
+        async jwt({ token, user }: { token: any; user: any }) {
             if (user) {
                 token.id = user.id;
             }
             return token;
         },
-        async session({ session, token }) {
+        async session({ session, token }: { session: any; token: any }) {
             if (session.user) {
-                (session.user as Record<string, unknown>).id = token.id;
+                session.user.id = token.id;
             }
             return session;
         },
@@ -60,6 +60,8 @@ const handler = NextAuth({
         signIn: "/auth/signin",
     },
     secret: process.env.NEXTAUTH_SECRET,
-});
+};
+
+const handler = NextAuth(authOptions);
 
 export { handler as GET, handler as POST };
