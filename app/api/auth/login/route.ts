@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
         }
 
         // Verify credentials
-        const valid = verifyCredentials(username.trim(), password);
+        const valid = await verifyCredentials(username.trim(), password);
         if (!valid) {
             return Response.json({ error: "Invalid credentials." }, { status: 401 });
         }
