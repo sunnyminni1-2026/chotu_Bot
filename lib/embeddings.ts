@@ -1,4 +1,5 @@
 // Gemini Embedding API + Text Chunking
+import { getDatabase, COLLECTIONS } from "./mongodb";
 
 const GEMINI_API_KEY = () => process.env.GEMINI_API_KEY?.trim() || "";
 const EMBEDDING_MODEL = "text-embedding-004";
@@ -95,4 +96,89 @@ export async function embedChunks(
     }
 
     return results;
+}
+
+// ============================
+// Shared RAG Search Utility
+// ============================
+/**
+ * Perform semantic and text search across the knowledge base.
+ */
+export async function ragSearch(query: string): Promise<string> {
+    try {
+        const db = await getDatabase();
+        const chunksCollection = db.collection(COLLECTIONS.CHUNKS);
+
+        // Check if we have any documents at all
+        const count = await chunksCollection.countDocuments();
+        if (count === 0) return "";
+
+        // 1. Generate Query Embedding
+        const queryEmbedding = await generateEmbedding(query);
+
+        // 2. Try Vector Search (Atlas Vector Search)
+        try {
+            const results = await chunksCollection
+                .aggregate([
+                    {
+                        $vectorSearch: {
+                            index: "vector_index",
+                            path: "embedding",
+                            queryVector: queryEmbedding,
+                            numCandidates: 20,
+                            limit: 5,
+                        },
+                    },
+                    {
+                        $project: {
+                            content: 1,
+                            score: { $meta: "vectorSearchScore" },
+                        },
+                    },
+                ])
+                .toArray();
+
+            if (results.length > 0) {
+                return results
+                    .map((r: any) => r.content)
+                    .join("\n\n---\n\n");
+            }
+        } catch (vectorError) {
+            // Vector search might not be configured yet, fallback to text search
+            console.warn("Vector search failed or not configured:", vectorError);
+        }
+
+        // 3. Fallback: Full-Text Search
+        const textResults = await chunksCollection
+            .find(
+                { $text: { $search: query } },
+                {
+                    projection: {
+                        content: 1,
+                        score: { $meta: "textScore" },
+                    },
+                }
+            )
+            .sort({ score: { $meta: "textScore" } })
+            .limit(5)
+            .toArray();
+
+        if (textResults.length > 0) {
+            return textResults
+                .map((r: any) => r.content)
+                .join("\n\n---\n\n");
+        }
+
+        // 4. Last Resort: Just return the 3 most recent chunks
+        const recent = await chunksCollection
+            .find({})
+            .sort({ createdAt: -1 })
+            .limit(3)
+            .toArray();
+
+        return recent.map((r: any) => r.content).join("\n\n---\n\n");
+    } catch (error) {
+        console.error("RAG search error:", error);
+        return "";
+    }
 }

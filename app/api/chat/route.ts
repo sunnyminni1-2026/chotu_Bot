@@ -1,6 +1,7 @@
 import Groq from "groq-sdk";
 import { NextRequest } from "next/server";
 import { trackSession, logChat, logError } from "@/lib/tracking";
+import { ragSearch } from "@/lib/embeddings";
 
 // ==================================================
 // RATE LIMITER — In-memory, per-IP
@@ -118,26 +119,41 @@ export async function POST(request: NextRequest) {
             content: sanitizeInput(msg.content),
         }));
 
-        // --- Log user message (non-blocking) ---
+        // --- RAG Search (Context Enrichment) ---
         const lastUserMsg = sanitizedMessages[sanitizedMessages.length - 1];
-        sessionPromise.then((sessionId) => {
-            if (lastUserMsg && sessionId) {
-                logChat(sessionId, "user", lastUserMsg.content, "user_chat");
+        let context = "";
+
+        // Log user message and perform RAG search in parallel-ish
+        if (lastUserMsg && lastUserMsg.role === "user") {
+            sessionPromise.then((sessionId) => {
+                if (sessionId) {
+                    logChat(sessionId, "user", lastUserMsg.content, "user_chat");
+                }
+            });
+
+            try {
+                context = await ragSearch(lastUserMsg.content);
+            } catch (ragErr) {
+                console.error("RAG search error in chat API:", ragErr);
             }
-        });
+        }
 
         // --- Call Groq API with STREAMING ---
         const groq = new Groq({ apiKey });
+
+        const systemPrompt =
+            "You are ChotuBot, a friendly and helpful AI assistant for businesses. " +
+            (context
+                ? "\n\nUSE THE FOLLOWING CONTEXT TO ANSWER THE USER'S QUESTION:\n" +
+                context +
+                "\n\nIf the answer is not in the context, use your general knowledge but mention that this information is not in the official documentation."
+                : "Keep responses concise, clear, and helpful. Be conversational but informative. If you don't know something, say so honestly.");
 
         const stream = await groq.chat.completions.create({
             messages: [
                 {
                     role: "system",
-                    content:
-                        "You are ChotuBot, a friendly and helpful AI assistant for businesses. " +
-                        "Keep responses concise, clear, and helpful. " +
-                        "Be conversational but informative. " +
-                        "If you don't know something, say so honestly.",
+                    content: systemPrompt,
                 },
                 ...sanitizedMessages,
             ],

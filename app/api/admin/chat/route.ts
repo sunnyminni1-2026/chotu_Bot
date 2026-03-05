@@ -3,7 +3,7 @@ import Groq from "groq-sdk";
 type GroqTool = any;
 import { NextRequest } from "next/server";
 import { verifyToken, getAuthCookieOptions } from "@/lib/auth";
-import { generateEmbedding } from "@/lib/embeddings";
+import { generateEmbedding, ragSearch } from "@/lib/embeddings";
 import { getDatabase, COLLECTIONS } from "@/lib/mongodb";
 import {
     countSessions,
@@ -230,51 +230,7 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
     }
 }
 
-// ============================
-// RAG Search
-// ============================
-async function ragSearch(query: string): Promise<string> {
-    try {
-        const db = await getDatabase();
-        const chunksCollection = db.collection(COLLECTIONS.CHUNKS);
-        const count = await chunksCollection.countDocuments();
-        if (count === 0) return "";
-
-        const queryEmbedding = await generateEmbedding(query);
-
-        try {
-            const results = await chunksCollection
-                .aggregate([
-                    {
-                        $vectorSearch: {
-                            index: "vector_index",
-                            path: "embedding",
-                            queryVector: queryEmbedding,
-                            numCandidates: 20,
-                            limit: 5,
-                        },
-                    },
-                    { $project: { content: 1, score: { $meta: "vectorSearchScore" } } },
-                ])
-                .toArray();
-            if (results.length > 0) return results.map((r: Record<string, string>) => r.content).join("\n\n---\n\n");
-        } catch {
-            // Vector search not available, fallback
-        }
-
-        const textResults = await chunksCollection
-            .find({ $text: { $search: query } }, { projection: { content: 1, score: { $meta: "textScore" } } })
-            .sort({ score: { $meta: "textScore" } })
-            .limit(5)
-            .toArray();
-        if (textResults.length > 0) return textResults.map((r: Record<string, string>) => r.content).join("\n\n---\n\n");
-
-        const recent = await chunksCollection.find({}).sort({ createdAt: -1 }).limit(3).toArray();
-        return recent.map((r: Record<string, string>) => r.content).join("\n\n---\n\n");
-    } catch {
-        return "";
-    }
-}
+// Main handler removed ragSearch local impl
 
 // ============================
 // MAIN HANDLER
