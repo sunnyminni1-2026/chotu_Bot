@@ -31,13 +31,17 @@ export default function ChatPage() {
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [activeConvoId, setActiveConvoId] = useState<string | null>(null);
     const [profileOpen, setProfileOpen] = useState(false);
+    const [showMemoryLimit, setShowMemoryLimit] = useState(false);
+    const [stats, setStats] = useState({ size: 0, limit: 50 * 1024 * 1024 }); // 50MB
     const chatWindowRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-    // Load conversation history on mount
+    // Load conversation history on mount or session change
     useEffect(() => {
-        loadHistory();
-    }, []);
+        if (session) {
+            loadHistory(true); // Load and hydrate active
+        }
+    }, [session]);
 
     // Auto-scroll
     useEffect(() => {
@@ -71,16 +75,33 @@ export default function ChatPage() {
         }
     }, [messages]);
 
-    const loadHistory = async () => {
+    const loadHistory = async (hydrateActive = false) => {
         try {
             const res = await fetch("/api/chat/history");
             const data = await res.json();
-            if (data.conversations) setConversations(data.conversations);
+            if (data.conversations) {
+                setConversations(data.conversations);
+
+                // If hydrating and no active convo, pick the latest one
+                if (hydrateActive && !activeConvoId && data.conversations.length > 0) {
+                    loadConversation(data.conversations[0]);
+                }
+            }
         } catch { /* silent */ }
     };
 
     const saveConversation = async () => {
         if (messages.length < 2) return;
+
+        // Calculate size
+        const currentSize = JSON.stringify(messages).length;
+        setStats((prev: { size: number; limit: number }) => ({ ...prev, size: currentSize }));
+
+        if (currentSize > stats.limit) {
+            setShowMemoryLimit(true);
+            return;
+        }
+
         try {
             const res = await fetch("/api/chat/history", {
                 method: "POST",
@@ -88,7 +109,7 @@ export default function ChatPage() {
                 body: JSON.stringify({
                     conversationId: activeConvoId,
                     messages: messages.map(m => ({ role: m.role, content: m.content })),
-                    title: messages[0]?.content.slice(0, 50),
+                    title: messages[0]?.role === "user" ? messages[0].content.slice(0, 50) : "New Conversation",
                 }),
             });
             const data = await res.json();
@@ -101,7 +122,7 @@ export default function ChatPage() {
 
     const loadConversation = (convo: Conversation) => {
         setActiveConvoId(convo.id);
-        setMessages(convo.messages.map((m, i) => ({
+        setMessages(convo.messages.map((m: { role: string; content: string }, i: number) => ({
             id: i,
             role: m.role as "user" | "assistant",
             content: m.content,
@@ -125,21 +146,21 @@ export default function ChatPage() {
         if (!trimmed || isLoading) return;
 
         const userMsg: Message = { id: Date.now(), role: "user", content: trimmed, time: getTime() };
-        setMessages(prev => [...prev, userMsg]);
+        setMessages((prev: Message[]) => [...prev, userMsg]);
         setInput("");
         setIsLoading(true);
         setError(null);
 
         const aiId = Date.now() + 1;
         const aiMsg: Message = { id: aiId, role: "assistant", content: "", time: getTime() };
-        setMessages(prev => [...prev, aiMsg]);
+        setMessages((prev: Message[]) => [...prev, aiMsg]);
 
         try {
             const res = await fetch("/api/chat", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    messages: [...messages, userMsg].map(m => ({ role: m.role, content: m.content })),
+                    messages: [...messages, userMsg].map((m: Message) => ({ role: m.role, content: m.content })),
                 }),
             });
 
@@ -151,12 +172,12 @@ export default function ChatPage() {
                 } else {
                     setError("Something went wrong.");
                 }
-                setMessages(prev => prev.filter(m => m.id !== aiId));
+                setMessages((prev: Message[]) => prev.filter((m: Message) => m.id !== aiId));
                 return;
             }
 
             const reader = res.body?.getReader();
-            if (!reader) { setError("Streaming not supported."); setMessages(prev => prev.filter(m => m.id !== aiId)); return; }
+            if (!reader) { setError("Streaming not supported."); setMessages((prev: Message[]) => prev.filter((m: Message) => m.id !== aiId)); return; }
 
             const decoder = new TextDecoder();
             let buffer = "";
@@ -174,7 +195,7 @@ export default function ChatPage() {
                         try {
                             const parsed = JSON.parse(data);
                             if (parsed.content) {
-                                setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: m.content + parsed.content } : m));
+                                setMessages((prev: Message[]) => prev.map((m: Message) => m.id === aiId ? { ...m, content: m.content + parsed.content } : m));
                             }
                         } catch { /* skip */ }
                     }
@@ -182,7 +203,7 @@ export default function ChatPage() {
             }
         } catch {
             setError("Network error.");
-            setMessages(prev => prev.filter(m => m.id !== aiId));
+            setMessages((prev: Message[]) => prev.filter((m: Message) => m.id !== aiId));
         } finally {
             setIsLoading(false);
             textareaRef.current?.focus();
@@ -198,6 +219,44 @@ export default function ChatPage() {
 
     return (
         <div className="flex h-screen bg-[#050510]">
+            {/* Memory Limit Dialog */}
+            <AnimatePresence>
+                {showMemoryLimit && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+                        <motion.div
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            className="bg-[#0a0a1a] border border-white/10 rounded-2xl p-6 max-w-md w-full shadow-2xl"
+                        >
+                            <div className="flex items-center gap-3 text-red-400 mb-4">
+                                <div className="p-2 bg-red-500/10 rounded-lg">
+                                    <X className="w-6 h-6" />
+                                </div>
+                                <h2 className="text-xl font-bold">Memory Limit Reached</h2>
+                            </div>
+                            <p className="text-white/60 text-sm mb-6 leading-relaxed">
+                                This conversation has exceeded the **50MB memory limit**.
+                                To maintain peak performance and engagement, please start a new session or clear your history.
+                            </p>
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={() => { newChat(); setShowMemoryLimit(false); }}
+                                    className="flex-1 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-medium transition-all"
+                                >
+                                    Start New Chat
+                                </button>
+                                <button
+                                    onClick={() => { /* Potential delete all logic */ newChat(); setShowMemoryLimit(false); }}
+                                    className="flex-1 py-3 bg-red-500 hover:bg-red-600 rounded-xl text-sm font-medium transition-all"
+                                >
+                                    Clear History
+                                </button>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
+
             {/* Mobile overlay */}
             {sidebarOpen && <div className="fixed inset-0 bg-black/60 z-40 md:hidden" onClick={() => setSidebarOpen(false)} />}
 
@@ -237,7 +296,7 @@ export default function ChatPage() {
                     ) : (
                         <>
                             <p className="text-[9px] text-white/20 uppercase tracking-widest font-medium px-3 py-2">Recent</p>
-                            {conversations.map(convo => (
+                            {conversations.map((convo: Conversation) => (
                                 <button
                                     key={convo.id}
                                     onClick={() => loadConversation(convo)}
@@ -350,7 +409,7 @@ export default function ChatPage() {
                             </h2>
                             <p className="text-xs text-white/25 max-w-sm">I&apos;m powered by LLaMA 3.3 70B. Ask me anything.</p>
                             <div className="flex flex-wrap gap-2 mt-6 justify-center max-w-md">
-                                {["What is ChotuBot?", "Explain RAG simply", "How does AI work?"].map(q => (
+                                {["What is ChotuBot?", "Explain RAG simply", "How does AI work?"].map((q: string) => (
                                     <button key={q} onClick={() => { setInput(q); textareaRef.current?.focus(); }}
                                         className="px-3 py-1.5 bg-white/[0.03] border border-white/[0.06] rounded-full text-[10px] text-white/35 hover:text-white/60 hover:bg-white/[0.06] transition-all">
                                         {q}
@@ -360,7 +419,7 @@ export default function ChatPage() {
                         </motion.div>
                     ) : (
                         <>
-                            {messages.map(msg => (
+                            {messages.map((msg: Message) => (
                                 <motion.div key={msg.id}
                                     className={cn("flex gap-3 max-w-[85%]", msg.role === "user" ? "ml-auto flex-row-reverse" : "mr-auto")}
                                     initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
@@ -400,7 +459,7 @@ export default function ChatPage() {
                         <textarea ref={textareaRef}
                             className="flex-1 bg-transparent border-none outline-none text-white/90 text-sm resize-none placeholder:text-white/20 py-2 px-2 min-h-[44px] max-h-[150px]"
                             placeholder="Message ChotuBot..."
-                            value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
+                            value={input} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setInput(e.target.value)} onKeyDown={handleKeyDown}
                             disabled={isLoading} rows={1} autoFocus />
                         <motion.button onClick={sendMessage} disabled={!input.trim() || isLoading}
                             whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
