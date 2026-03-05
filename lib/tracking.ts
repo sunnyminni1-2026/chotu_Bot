@@ -26,6 +26,7 @@ export async function trackSession(ip: string, userAgent: string, path: string) 
         const db = await getDatabase();
         const sessionId = hashIP(ip);
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await db.collection(COLLECTIONS.SESSIONS).updateOne(
             { sessionId },
             {
@@ -38,9 +39,9 @@ export async function trackSession(ip: string, userAgent: string, path: string) 
                 $push: {
                     visits: {
                         $each: [{ path, timestamp: new Date() }],
-                        $slice: -50, // Keep last 50 visits
+                        $slice: -50,
                     },
-                } as Record<string, unknown>,
+                } as any,
                 $setOnInsert: {
                     firstSeen: new Date(),
                 },
