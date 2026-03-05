@@ -1,6 +1,6 @@
 # ChotuBot — Product Requirements Document (PRD)
 
-**Version**: 2.0 | **Date**: March 2026 | **Status**: Production  
+**Version**: 3.0 | **Date**: March 2026 | **Status**: Production  
 **Live URL**: https://chotubot.vercel.app  
 **Repository**: GitHub (private)
 
@@ -168,6 +168,7 @@ graph TB
 | **Framework** | Next.js 14 (App Router) | Full-stack React with SSR, API routes, middleware | $0 |
 | **Language** | TypeScript 5.3 | Type safety, better developer experience | $0 |
 | **Styling** | Tailwind CSS 3.4 | Utility-first CSS framework | $0 |
+| **UI Components** | shadcn/ui (Button, Card, Badge) | CVA-based variant system with @radix-ui/react-slot | $0 |
 | **Animation** | Framer Motion 11 | Page transitions, scroll animations, micro-interactions | $0 |
 | **Icons** | Lucide React | Modern, consistent icon library | $0 |
 | **LLM** | Groq (LLaMA 3.3 70B Versatile) | Chat completion, function calling, streaming | $0 (free tier) |
@@ -186,7 +187,7 @@ graph TB
 
 ### 7.1 Customer Chat (Streaming)
 
-- **Route**: `/chat`
+- **Route**: `/chat` (🔒 **Auth required** — middleware redirects to `/auth/signin` if no session)
 - **Model**: LLaMA 3.3 70B via Groq API
 - **Streaming**: Server-Sent Events (SSE) — words appear in real-time like ChatGPT
 - **Rate Limiting**: 20 messages per minute per IP
@@ -228,12 +229,13 @@ graph TB
 - **Session Strategy**: JWT (no database sessions needed)
 - **User Upsert**: On first sign-in, creates user in MongoDB `users` collection
 - **Chat History**: Authenticated users get persistent chat history
-- **Anonymous Access**: Users can also use chat without signing in
+- **Mandatory Auth**: `/chat` requires Google sign-in (middleware-enforced redirect). No anonymous access.
 
 ### 7.6 Landing Page
 
-- **Sections**: Hero (particle system), Stats Bar, Features (6 cards), Live Demo Chat, Pricing (3 tiers), Testimonials (3 reviews), Trust Badges, FAQ Accordion (5 questions), Final CTA, Footer
-- **Animations**: Framer Motion scroll-reveal, hover effects, floating particles
+- **Sections**: Hero (BackgroundPaths SVG animation), Stats Bar, Features (6 cards), How It Works (3 steps), Pricing (Starter $0/Growth $29/Enterprise Custom), Testimonials (3 reviews), Trust Badges, FAQ Accordion (5 questions), Final CTA, Footer
+- **Animations**: Framer Motion scroll-reveal (`useInView`), hover effects, animated SVG paths (36 flowing lines with violet/indigo gradient)
+- **Auth**: All CTAs ("Get Started", "Sign In", pricing buttons) route to `/auth/signin`
 - **SEO**: JSON-LD schemas, Open Graph, Twitter Card, sitemap, robots.txt
 
 ---
@@ -377,7 +379,7 @@ data: [DONE]
 - Password: SHA-256 via Web Crypto API
 - Token: HMAC-SHA256 signed, 24h expiry
 - Storage: httpOnly + Secure + SameSite=Lax cookie
-- Middleware: Protects all `/admin/*` except `/admin/login`
+- Middleware: Protects all `/admin/*` except `/admin/login`, and `/chat/*` (requires NextAuth session)
 
 ### Security Measures
 - Rate Limiting: In-memory per-IP (20/min users, 30/min admin)
@@ -513,9 +515,16 @@ chotubot/
 │           ├── analytics/route.ts
 │           └── documents/route.ts # RAG + KB
 ├── components/
-│   ├── landing-page.tsx        # Landing page (560 lines)
+│   ├── landing-page.tsx        # Landing page (BackgroundPaths, pricing, FAQ)
 │   ├── auth-provider.tsx       # NextAuth wrapper
-│   └── ui/                     # Particle field, text shimmer, voice input
+│   └── ui/
+│       ├── background-paths.tsx # Animated SVG flowing paths
+│       ├── button.tsx           # shadcn Button (CVA variants)
+│       ├── card.tsx             # shadcn Card components
+│       ├── badge.tsx            # shadcn Badge component
+│       ├── particle-field.tsx   # Canvas particle system
+│       ├── text-shimmer.tsx     # Gradient text animation
+│       └── ai-voice-input.tsx   # Voice input component
 ├── lib/
 │   ├── mongodb.ts              # Connection + caching
 │   ├── auth.ts                 # JWT sign/verify
@@ -523,8 +532,8 @@ chotubot/
 │   ├── tracking.ts             # Session/chat/error logging
 │   ├── embeddings.ts           # Gemini embeddings
 │   └── utils.ts                # cn() utility
-├── middleware.ts               # Admin route protection
-└── package.json                # 10 prod + 7 dev dependencies
+├── middleware.ts               # /admin + /chat route protection
+└── package.json                # 12 prod + 7 dev dependencies
 ```
 
 ---
