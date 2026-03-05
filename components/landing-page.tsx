@@ -50,14 +50,7 @@ const features = [
     { icon: Zap, title: "$0 Cost", desc: "Free tier everything. Groq, Gemini, MongoDB, Vercel. Zero bills.", color: "cyan" },
 ];
 
-const colorMap: Record<string, string> = {
-    violet: "from-violet-500 to-indigo-600",
-    emerald: "from-emerald-500 to-teal-600",
-    blue: "from-blue-500 to-cyan-600",
-    amber: "from-amber-500 to-orange-600",
-    rose: "from-rose-500 to-pink-600",
-    cyan: "from-cyan-500 to-sky-600",
-};
+
 
 const iconBgMap: Record<string, string> = {
     violet: "bg-violet-500/10 text-violet-400",
@@ -178,7 +171,7 @@ export default function LandingPage() {
                             <Shield className="w-3 h-3" />Admin
                         </a>
                         <motion.a
-                            href="#demo"
+                            href="/chat"
                             whileHover={{ scale: 1.03 }}
                             whileTap={{ scale: 0.97 }}
                             className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-violet-500 to-indigo-600 text-white text-xs font-medium rounded-xl shadow-lg shadow-violet-500/20"
@@ -395,18 +388,19 @@ export default function LandingPage() {
                                             </li>
                                         ))}
                                     </ul>
-                                    <motion.button
+                                    <motion.a
+                                        href="/chat"
                                         whileHover={{ scale: 1.02 }}
                                         whileTap={{ scale: 0.98 }}
                                         className={cn(
-                                            "w-full mt-6 py-2.5 rounded-xl text-xs font-semibold transition-all",
+                                            "w-full mt-6 py-2.5 rounded-xl text-xs font-semibold transition-all block text-center",
                                             plan.highlight
                                                 ? "bg-gradient-to-r from-violet-500 to-indigo-600 text-white shadow-lg shadow-violet-500/20"
                                                 : "bg-white/[0.04] text-white/50 hover:bg-white/[0.08] border border-white/[0.06]"
                                         )}
                                     >
                                         {plan.price === "Custom" ? "Contact Us" : "Get Started"}
-                                    </motion.button>
+                                    </motion.a>
                                 </motion.div>
                             </Reveal>
                         ))}
