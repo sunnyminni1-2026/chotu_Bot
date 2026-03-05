@@ -1,9 +1,9 @@
-import { NextRequest } from "next/server";
+// Admin analytics API
 import { verifyToken, getAuthCookieOptions } from "@/lib/auth";
 import { cookies } from "next/headers";
 import { getDatabase } from "@/lib/mongodb";
 
-export async function GET(request: NextRequest) {
+export async function GET() {
     try {
         // Auth check
         const cookieStore = await cookies();
